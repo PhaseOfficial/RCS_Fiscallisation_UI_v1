@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import PropTypes from 'prop-types'; // <--- Import this
 import { supabase } from '../lib/supabaseClient';
 
 const AuthContext = createContext({});
@@ -10,19 +9,36 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    console.log("AUTH: Starting session check...");
+
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error("AUTH ERROR (GetSession):", error);
+        setLoading(false); // Stop loading even if error
+        return;
+      }
+      
+      console.log("AUTH: Session found?", !!session);
       setUser(session?.user ?? null);
-      if (session?.user) fetchRole(session.user.id);
-      else setLoading(false);
-    }).catch((error) => {
-      console.error('Error getting session:', error);
-      setLoading(false);
+      
+      if (session?.user) {
+        fetchRole(session.user.id);
+      } else {
+        setLoading(false);
+      }
     });
 
+    // Listen for changes (login/logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("AUTH: State change event:", _event);
       setUser(session?.user ?? null);
-      if (session?.user) fetchRole(session.user.id);
-      else setLoading(false);
+      
+      if (session?.user) {
+        fetchRole(session.user.id);
+      } else {
+        setLoading(false);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -30,20 +46,41 @@ export const AuthProvider = ({ children }) => {
 
   const fetchRole = async (userId) => {
     try {
-      // Check Super Admin
-      const { data: superAdmin } = await supabase.from('app_admins').select('*').eq('user_id', userId).single();
+      console.log("AUTH: Fetching role for", userId);
+      
+      // 1. Check Super Admin
+      const { data: superAdmin, error: saError } = await supabase
+        .from('app_admins')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle(); // Use maybeSingle to avoid 406 error if not found
+
       if (superAdmin) {
+        console.log("AUTH: Role is Super Admin");
         setRole('super_admin');
-      } else {
-        // Check Org Role
-        const { data: member } = await supabase.from('organization_members').select('role').eq('user_id', userId).single();
-        setRole(member?.role || 'user');
+        setLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching role:', error);
-      setRole('user'); // Default to user on error
+
+      // 2. Check Org Role
+      const { data: member, error: memError } = await supabase
+        .from('organization_members')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (member) {
+        console.log("AUTH: Role is", member.role);
+        setRole(member.role);
+      } else {
+        console.log("AUTH: No role found (User)");
+        setRole('user');
+      }
+    } catch (err) {
+      console.error("AUTH: Role fetch error", err);
+    } finally {
+      setLoading(false); // ALWAYS finish loading
     }
-    setLoading(false);
   };
 
   return (
@@ -51,11 +88,6 @@ export const AuthProvider = ({ children }) => {
       {!loading && children}
     </AuthContext.Provider>
   );
-};
-
-// <--- Add this validation block
-AuthProvider.propTypes = {
-  children: PropTypes.node.isRequired,
 };
 
 export const useAuth = () => useContext(AuthContext);

@@ -5,6 +5,10 @@ import Devices from './pages/Devices';
 import Sidebar from './components/Sidebar'; // We'll make a quick sidebar below
 // Import the new page
 import Organizations from './pages/Organizations';
+import Team from './pages/Team';
+import Terminal from './pages/Terminal';
+import Sales from './pages/Sales';
+import FiscalDay from './pages/Dashboard';
 
 
 // 1. Protected Route Component
@@ -38,6 +42,14 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard/devices" replace />} />
             <Route path="/dashboard/devices" element={<Devices />} />
             <Route path="/dashboard/orgs" element={<Organizations />} />
+            <Route path="/dashboard/team" element={<Team />} />
+            <Route path="/dashboard/terminal" element={<Terminal />} />
+            <Route path="/dashboard/sales" element={<Sales />} />
+            <Route path="/dashboard" element={<FiscalDay />} />
+<Route path="/dashboard/terminal" element={<Terminal />} />
+<Route path="/dashboard/sales" element={<Sales />} />
+<Route path="/dashboard/fiscal-day" element={<FiscalDay />} />
+<Route path="/dashboard/team" element={<Team />} />
             {/* Add more pages here like /dashboard/organizations */}
           </Route>
 

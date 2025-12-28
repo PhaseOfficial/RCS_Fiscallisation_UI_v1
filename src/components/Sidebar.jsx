@@ -1,6 +1,8 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { Server, LogOut, LayoutDashboard } from 'lucide-react';
+import { Users, ShoppingCart, Receipt } from 'lucide-react';
+import { CalendarClock } from 'lucide-react';
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -39,6 +41,42 @@ export default function Sidebar() {
   <LayoutDashboard size={20} />
   Organizations
   </Link>
+
+<Link 
+  to="/dashboard/fiscal-day" 
+  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/dashboard/fiscal-day')}`}
+>
+  <CalendarClock size={20} />
+  Fiscal Day (Z-Report)
+</Link>
+
+<div className="pt-4 pb-2 text-xs font-bold text-red-500 uppercase tracking-wider px-4">
+  Operations
+</div>
+
+<Link 
+  to="/dashboard/terminal" 
+  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/dashboard/terminal')}`}
+>
+  <ShoppingCart size={20} />
+  POS Terminal
+</Link>
+
+<Link 
+  to="/dashboard/sales" 
+  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/dashboard/sales')}`}
+>
+  <Receipt size={20} />
+  Sales History
+</Link>
+
+<Link 
+  to="/dashboard/team" 
+  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive('/dashboard/team')}`}
+>
+  <Users size={20} />
+  Team Management
+</Link>
       </nav>
 
       <div className="p-4 border-t border-gray-800">
