@@ -1,0 +1,84 @@
+#root {
+  margin: 0 auto;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+@media (max-width: 640px) {
+  .logo-home {
+    width: 500px;
+  }
+  .typewriter-text {
+    font-size: 1.5rem;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 768px) {
+  .logo-home {
+    
+  }
+  .typewriter-text {
+    font-size: 2rem;
+  }
+}
+
+@media (min-width: 769px) {
+  .logo-home {
+    
+  }
+  .typewriter-text {
+    font-size: 2.5rem;
+  }
+}
+/* filepath: /e:/RCSLandings/landing_pages/src/styles/global.css */
+.game-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  width: 300px;
+  height: 300px;
+  border-radius: 15px;
+}
+
+.game-card:hover {
+  transform: scale(1.05);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+/* filepath: /e:/RCSLandings/landing_pages/src/styles/global.css */
+canvas {
+  width: 100%;
+  height: auto;
+}
