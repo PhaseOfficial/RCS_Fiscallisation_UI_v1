@@ -1,28 +1,30 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Plus, Building2, MapPin, Phone, Mail, Edit2, X } from 'lucide-react';
+import { Plus, Building2, MapPin, Phone, Mail, Edit2, X, Users, Shield, User, Loader2 } from 'lucide-react';
 
 export default function Organizations() {
   const [orgs, setOrgs] = useState([]);
   const [loading, setLoading] = useState(false);
   
-  // Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingOrg, setEditingOrg] = useState(null); // If null, we are in "Create" mode. If set, "Edit" mode.
+  // -- Modals State --
+  const [isOrgModalOpen, setIsOrgModalOpen] = useState(false);
+  const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
+  
+  // -- Data State --
+  const [editingOrg, setEditingOrg] = useState(null);
+  const [selectedOrgForUsers, setSelectedOrgForUsers] = useState(null);
+  const [orgUsers, setOrgUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false); // Loading state for user list
 
-  // Form State
-  const initialFormState = {
-    name: '',
-    tin: '',
-    vat_number: '',
-    address_province: '',
-    address_city: '',
-    address_street: '',
-    address_house_no: '',
-    contact_email: '',
-    contact_phone: ''
+  // -- Forms State --
+  const initialOrgForm = {
+    name: '', tin: '', vat_number: '',
+    address_province: '', address_city: '', address_street: '', address_house_no: '',
+    contact_email: '', contact_phone: ''
   };
-  const [formData, setFormData] = useState(initialFormState);
+  const [orgForm, setOrgForm] = useState(initialOrgForm);
+
+  const [userForm, setUserForm] = useState({ email: '', password: '', role: 'cashier' });
 
   useEffect(() => {
     fetchOrgs();
@@ -34,17 +36,63 @@ export default function Organizations() {
     else setOrgs(data);
   }
 
-  // --- OPEN MODAL HANDLERS ---
-  
-  const openCreateModal = () => {
-    setEditingOrg(null); // Reset edit mode
-    setFormData(initialFormState); // Clear form
-    setIsModalOpen(true);
+  // --- USER MANAGEMENT LOGIC ---
+
+  async function openUsersModal(org) {
+    setSelectedOrgForUsers(org);
+    setIsUsersModalOpen(true);
+    fetchOrgUsers(org.id);
+  }
+
+  async function fetchOrgUsers(orgId) {
+    setLoadingUsers(true);
+    // Call the SQL function we created
+    const { data, error } = await supabase.rpc('get_org_users', { target_org_id: orgId });
+    
+    if (error) {
+      console.error(error);
+      alert("Error loading users: " + error.message);
+    } else {
+      setOrgUsers(data || []);
+    }
+    setLoadingUsers(false);
+  }
+
+  async function handleAddUser(e) {
+    e.preventDefault();
+    setLoading(true); // Reusing main loading state for button
+
+    // Call Edge Function to create user
+    const { data, error } = await supabase.functions.invoke('admin-create-user', {
+      body: {
+        email: userForm.email,
+        password: userForm.password,
+        organizationId: selectedOrgForUsers.id,
+        role: userForm.role 
+      }
+    });
+
+    if (error || data?.error) {
+      alert('Error: ' + (error?.message || data?.error));
+    } else {
+      alert(`User added as ${userForm.role}!`);
+      setUserForm({ email: '', password: '', role: 'cashier' }); // Reset form
+      fetchOrgUsers(selectedOrgForUsers.id); // Refresh list immediately
+    }
+    setLoading(false);
+  }
+
+  // --- ORG MANAGEMENT LOGIC ---
+
+  const openCreateOrgModal = () => {
+    setEditingOrg(null);
+    setOrgForm(initialOrgForm);
+    setIsOrgModalOpen(true);
   };
 
-  const openEditModal = (org) => {
-    setEditingOrg(org); // Set current org being edited
-    setFormData({
+  const openEditOrgModal = (org) => {
+    setEditingOrg(org);
+    setOrgForm({
       name: org.name,
       tin: org.tin,
       vat_number: org.vat_number || '',
@@ -55,210 +103,250 @@ export default function Organizations() {
       contact_email: org.contact_email || '',
       contact_phone: org.contact_phone || ''
     });
-    setIsModalOpen(true);
+    setIsOrgModalOpen(true);
   };
 
-  // --- SUBMIT HANDLER (Create OR Update) ---
-
-  async function handleSubmit(e) {
+  async function handleOrgSubmit(e) {
     e.preventDefault();
     setLoading(true);
 
     let error;
-
     if (editingOrg) {
-      // UPDATE EXISTING
-      const { error: updateError } = await supabase
-        .from('organizations')
-        .update(formData)
-        .eq('id', editingOrg.id); // Critical: Update where ID matches
+      const { error: updateError } = await supabase.from('organizations').update(orgForm).eq('id', editingOrg.id);
       error = updateError;
     } else {
-      // CREATE NEW
-      const { error: insertError } = await supabase
-        .from('organizations')
-        .insert([formData]);
+      const { error: insertError } = await supabase.from('organizations').insert([orgForm]);
       error = insertError;
     }
 
-    if (error) {
-      alert('Error: ' + error.message);
-    } else {
+    if (error) alert('Error: ' + error.message);
+    else {
       alert(editingOrg ? 'Organization Updated!' : 'Organization Created!');
-      setIsModalOpen(false);
-      fetchOrgs(); // Refresh the list
+      setIsOrgModalOpen(false);
+      fetchOrgs();
     }
     setLoading(false);
   }
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  const handleOrgChange = (e) => setOrgForm({ ...orgForm, [e.target.name]: e.target.value });
+
 
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-800">Organizations</h1>
         <button 
-          onClick={openCreateModal} 
+          onClick={openCreateOrgModal} 
           className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm"
         >
           <Plus size={20} /> Add Organization
         </button>
       </div>
 
-      {/* LIST VIEW */}
+      {/* ORG LIST */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {orgs.map((org) => (
           <div key={org.id} className="group bg-white rounded-xl shadow-sm border border-gray-200 p-5 hover:shadow-md transition relative">
             
-            {/* EDIT BUTTON (Absolute Positioned) */}
-            <button 
-              onClick={() => openEditModal(org)}
-              className="absolute top-4 right-4 p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition opacity-0 group-hover:opacity-100"
-              title="Edit Details"
-            >
-              <Edit2 size={18} />
-            </button>
+            {/* Top Action Buttons */}
+            <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+              <button 
+                onClick={() => openEditOrgModal(org)}
+                className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full"
+                title="Edit Details"
+              >
+                <Edit2 size={18} />
+              </button>
+            </div>
 
-            <div className="flex justify-between items-start mb-4 pr-8"> 
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                  <Building2 size={24} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-gray-900 leading-tight">{org.name}</h3>
-                  <p className="text-xs text-gray-500 font-mono mt-1">TIN: {org.tin}</p>
-                </div>
+            <div className="flex items-center gap-3 mb-4 pr-16">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                <Building2 size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 leading-tight truncate">{org.name}</h3>
+                <p className="text-xs text-gray-500 font-mono mt-1">TIN: {org.tin}</p>
               </div>
             </div>
 
-            <div className="space-y-3 text-sm text-gray-600">
-              <div className="flex items-start gap-2">
+            <div className="space-y-2 text-sm text-gray-600">
+               <div className="flex items-start gap-2">
                 <MapPin size={16} className="mt-0.5 text-gray-400 shrink-0" />
-                <span className="leading-snug">
-                  {org.address_house_no} {org.address_street}, {org.address_city}
-                  <span className="block text-xs text-gray-400">{org.address_province}</span>
+                <span className="leading-snug truncate">
+                  {org.address_city}, {org.address_province}
                 </span>
               </div>
-              
-              {(org.contact_email || org.contact_phone) && (
-                <div className="pt-3 border-t border-gray-100 mt-3 flex flex-col gap-2">
-                  {org.contact_email && (
-                    <div className="flex items-center gap-2">
-                      <Mail size={14} className="text-gray-400" />
-                      <span className="truncate">{org.contact_email}</span>
-                    </div>
-                  )}
-                  {org.contact_phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone size={14} className="text-gray-400" />
-                      <span>{org.contact_phone}</span>
-                    </div>
-                  )}
+              {org.contact_email && (
+                <div className="flex items-center gap-2">
+                  <Mail size={14} className="text-gray-400" />
+                  <span className="truncate">{org.contact_email}</span>
                 </div>
               )}
+            </div>
+            
+            <div className="mt-4 pt-3 border-t">
+              <button 
+                onClick={() => openUsersModal(org)}
+                className="w-full text-center text-xs font-bold text-white bg-gray-800 hover:bg-gray-900 py-2 rounded flex justify-center items-center gap-2 transition"
+              >
+                <Users size={14} /> Manage Team
+              </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* SHARED MODAL (Create & Edit) */}
-      {isModalOpen && (
+
+      {/* --- MODAL 1: CREATE/EDIT ORG --- */}
+      {isOrgModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h2 className="text-lg font-semibold text-gray-800">
-                {editingOrg ? 'Edit Organization' : 'Add New Organization'}
-              </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-1 transition">
-                <X size={20} />
-              </button>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-semibold">{editingOrg ? 'Edit Organization' : 'Add New Organization'}</h2>
+              <button onClick={() => setIsOrgModalOpen(false)}><X size={20} className="text-gray-400" /></button>
             </div>
-            
-            <form onSubmit={handleSubmit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form onSubmit={handleOrgSubmit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2"><label className="text-sm font-medium">Company Name</label><input name="name" required className="input-field" onChange={handleOrgChange} value={orgForm.name} /></div>
+              <div><label className="text-sm font-medium">TIN</label><input name="tin" required className="input-field" onChange={handleOrgChange} value={orgForm.tin} /></div>
+              <div><label className="text-sm font-medium">VAT</label><input name="vat_number" className="input-field" onChange={handleOrgChange} value={orgForm.vat_number} /></div>
+              {/* Address Fields Simplified */}
+              <div><label className="text-sm font-medium">City</label><input name="address_city" className="input-field" onChange={handleOrgChange} value={orgForm.address_city} /></div>
+              <div><label className="text-sm font-medium">Province</label><select name="address_province" className="input-field" onChange={handleOrgChange} value={orgForm.address_province}><option>Harare</option><option>Bulawayo</option></select></div>
               
-              {/* Core Info */}
-              <div className="md:col-span-2 space-y-4">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Company Details</h3>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
-                    <input name="name" required className="input-field" onChange={handleChange} value={formData.name} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">TIN (ZIMRA ID) *</label>
-                    <input name="tin" required className="input-field" onChange={handleChange} value={formData.tin} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">VAT Number</label>
-                    <input name="vat_number" className="input-field" onChange={handleChange} value={formData.vat_number} />
-                  </div>
-                </div>
+              <div className="md:col-span-2 pt-4 flex justify-end gap-3">
+                 <button type="button" onClick={() => setIsOrgModalOpen(false)} className="px-4 py-2 rounded text-gray-600 hover:bg-gray-100">Cancel</button>
+                 <button type="submit" disabled={loading} className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">{loading ? 'Saving...' : 'Save'}</button>
               </div>
-
-              {/* Address */}
-              <div className="md:col-span-2 space-y-4 pt-2">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-t pt-4">Address</h3>
-                <div className="grid md:grid-cols-2 gap-4">
-                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Province</label>
-                    <select name="address_province" className="input-field" onChange={handleChange} value={formData.address_province}>
-                      <option value="">Select...</option>
-                      <option value="Harare">Harare</option>
-                      <option value="Bulawayo">Bulawayo</option>
-                      <option value="Manicaland">Manicaland</option>
-                      <option value="Mashonaland Central">Mashonaland Central</option>
-                      <option value="Mashonaland East">Mashonaland East</option>
-                      <option value="Mashonaland West">Mashonaland West</option>
-                      <option value="Masvingo">Masvingo</option>
-                      <option value="Matabeleland North">Matabeleland North</option>
-                      <option value="Matabeleland South">Matabeleland South</option>
-                      <option value="Midlands">Midlands</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                    <input name="address_city" className="input-field" onChange={handleChange} value={formData.address_city} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Street</label>
-                    <input name="address_street" className="input-field" onChange={handleChange} value={formData.address_street} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">House No.</label>
-                    <input name="address_house_no" className="input-field" onChange={handleChange} value={formData.address_house_no} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Contact */}
-              <div className="md:col-span-2 space-y-4 pt-2">
-                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-t pt-4">Contact</h3>
-                 <div className="grid md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                      <input type="email" name="contact_email" className="input-field" onChange={handleChange} value={formData.contact_email} />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                      <input type="tel" name="contact_phone" className="input-field" onChange={handleChange} value={formData.contact_phone} />
-                    </div>
-                 </div>
-              </div>
-
-              <div className="md:col-span-2 pt-6 flex justify-end gap-3 border-t mt-2">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition">Cancel</button>
-                <button type="submit" disabled={loading} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm font-medium">
-                  {loading ? 'Saving...' : (editingOrg ? 'Save Changes' : 'Create Organization')}
-                </button>
-              </div>
-
             </form>
           </div>
         </div>
       )}
+
+
+      {/* --- MODAL 2: MANAGE USERS (THE REQUESTED FEATURE) --- */}
+      {isUsersModalOpen && selectedOrgForUsers && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex overflow-hidden animate-in fade-in zoom-in duration-200">
+            
+            {/* LEFT COLUMN: EXISTING MEMBERS LIST */}
+            <div className="w-2/3 border-r bg-gray-50 flex flex-col">
+              <div className="p-4 border-b bg-white flex justify-between items-center sticky top-0">
+                <div>
+                  <h3 className="font-bold text-gray-800">{selectedOrgForUsers.name}</h3>
+                  <p className="text-xs text-gray-500">Existing Team Members</p>
+                </div>
+                <span className="text-xs bg-gray-100 px-2 py-1 rounded-full text-gray-600 font-bold">{orgUsers.length}</span>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {loadingUsers ? (
+                  <div className="flex flex-col items-center justify-center h-40 text-gray-400">
+                    <Loader2 size={32} className="animate-spin mb-2" />
+                    <p>Loading members...</p>
+                  </div>
+                ) : orgUsers.length === 0 ? (
+                  <div className="text-center text-gray-400 mt-10 p-4 border-2 border-dashed border-gray-200 rounded-lg">
+                    <Users size={32} className="mx-auto mb-2 opacity-50" />
+                    <p>No users found in this organization.</p>
+                  </div>
+                ) : (
+                  orgUsers.map(u => (
+                    <div key={u.user_id} className="bg-white p-3 rounded-lg border shadow-sm flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-full ${u.role === 'org_admin' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                          {u.role === 'org_admin' ? <Shield size={16} /> : <User size={16} />}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900 text-sm">{u.email}</p>
+                          <p className="text-xs text-gray-500 capitalize">{u.role.replace('_', ' ')}</p>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {new Date(u.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: ADD NEW USER FORM */}
+            <div className="w-1/3 flex flex-col bg-white">
+              <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+                 <h3 className="font-bold text-gray-800 text-sm">Add New Member</h3>
+                 <button onClick={() => setIsUsersModalOpen(false)}><X size={20} className="text-gray-400 hover:text-red-500" /></button>
+              </div>
+              
+              <div className="p-6 flex-1">
+                <form onSubmit={handleAddUser} className="space-y-4">
+                   <div>
+                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Select Role</label>
+                     <div className="grid grid-cols-2 gap-2">
+                       <button 
+                         type="button" 
+                         onClick={() => setUserForm({...userForm, role: 'cashier'})}
+                         className={`p-2 text-xs border rounded text-center transition ${userForm.role === 'cashier' ? 'border-blue-500 bg-blue-50 text-blue-700 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}
+                       >
+                         Cashier
+                       </button>
+                       <button 
+                         type="button" 
+                         onClick={() => setUserForm({...userForm, role: 'org_admin'})}
+                         className={`p-2 text-xs border rounded text-center transition ${userForm.role === 'org_admin' ? 'border-purple-500 bg-purple-50 text-purple-700 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}
+                       >
+                         Org Admin
+                       </button>
+                     </div>
+                   </div>
+
+                   <div>
+                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email Address</label>
+                     <input 
+                       type="email" 
+                       required
+                       className="input-field"
+                       placeholder="user@company.com"
+                       value={userForm.email}
+                       onChange={e => setUserForm({...userForm, email: e.target.value})}
+                     />
+                   </div>
+
+                   <div>
+                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Password</label>
+                     <input 
+                       type="password" 
+                       required
+                       className="input-field"
+                       placeholder="••••••••"
+                       value={userForm.password}
+                       onChange={e => setUserForm({...userForm, password: e.target.value})}
+                     />
+                   </div>
+
+                   <button 
+                     type="submit" 
+                     disabled={loading}
+                     className="w-full mt-4 bg-green-600 text-white py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition disabled:opacity-50 flex justify-center items-center gap-2"
+                   >
+                     {loading ? <Loader2 size={16} className="animate-spin"/> : <Plus size={16}/>}
+                     {loading ? 'Adding...' : 'Add User'}
+                   </button>
+                </form>
+
+                <div className="mt-8 p-4 bg-yellow-50 rounded border border-yellow-100 text-xs text-yellow-700">
+                  <strong>Privileges:</strong> 
+                  <ul className="list-disc pl-3 mt-1 space-y-1">
+                    <li><strong>Org Admin:</strong> Can manage devices, view sales, and add other users.</li>
+                    <li><strong>Cashier:</strong> Can only access the POS Terminal.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
