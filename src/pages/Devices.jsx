@@ -1,350 +1,307 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../contexts/Auth';
-import { Upload, Plus, Server, CheckCircle, AlertCircle, Edit2, X, Eye } from 'lucide-react';
+import forge from 'node-forge'; 
+import { 
+  Server, Plus, Shield, CheckCircle, XCircle, 
+  Key, Activity, AlertTriangle, Loader2, Hash, Tag, Box, RefreshCw, Sun, Moon
+} from 'lucide-react';
 
 export default function Devices() {
-  const { role } = useAuth();
+  const { user } = useAuth();
+  
+  // Data State
   const [devices, setDevices] = useState([]);
-  const [orgs, setOrgs] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [checkingId, setCheckingId] = useState(null); // Which device is currently syncing?
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDevice, setEditingDevice] = useState(null); 
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   
-  // Form State
-  const [activeTab, setActiveTab] = useState('auto'); // 'auto' or 'manual'
-  const initialFormState = {
-    organizationId: '',
-    serialNumber: '',
-    activationKey: '',
-    deviceModelName: 'Server',
-    deviceModelVersion: '1.0',
-    status: 'ACTIVE',
-    device_id: '' 
-  };
-  const [formData, setFormData] = useState(initialFormState);
-  const [files, setFiles] = useState({ cert: null, key: null });
+  // Forms
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [activationKey, setActivationKey] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [logs, setLogs] = useState([]); 
+
+  const [newDevice, setNewDevice] = useState({
+    device_id: '',           
+    serial_number: '',       
+    device_model_name: 'Server',
+    device_model_version: 'v1'
+  });
 
   useEffect(() => {
     fetchDevices();
-    fetchOrgs();
-  }, []);
+  }, [user]);
 
   async function fetchDevices() {
-    const { data } = await supabase
-      .from('fiscal_devices')
-      .select('*, organizations(name)')
-      .order('device_id');
-    if (data) setDevices(data);
-  }
-
-  async function fetchOrgs() {
-    const { data } = await supabase.from('organizations').select('id, name').order('name');
-    if (data) setOrgs(data);
-  }
-
-  const openCreateModal = () => {
-    setEditingDevice(null);
-    setFormData(initialFormState);
-    setActiveTab('auto');
-    setIsModalOpen(true);
-  };
-
-  const openEditModal = (device) => {
-    setEditingDevice(device);
-    setFormData({
-      organizationId: device.organization_id,
-      serialNumber: device.serial_number,
-      activationKey: device.activation_key || '', // Load existing key
-      deviceModelName: device.device_model_name,
-      deviceModelVersion: device.device_model_version,
-      status: device.status,
-      device_id: device.device_id
-    });
-    setIsModalOpen(true);
-  };
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-
     try {
-      if (editingDevice) {
-        // --- UPDATE EXISTING ---
-        const { error } = await supabase
+      const { data: member } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).single();
+      if (member) {
+        const { data } = await supabase
           .from('fiscal_devices')
-          .update({
-            organization_id: formData.organizationId,
-            serial_number: formData.serialNumber,
-            activation_key: formData.activationKey, // Allow updating key if needed
-            status: formData.status
-          })
-          .eq('device_id', editingDevice.device_id);
-
-        if (error) throw error;
-        alert('Device Updated Successfully');
-      } 
-      else {
-        // --- CREATE NEW ---
-        if (activeTab === 'auto') {
-          const { data, error } = await supabase.functions.invoke('register-device', {
-            body: formData
-          });
-          if (error || data.error) throw new Error(error?.message || data?.error);
-          alert(`Device Registered! ID: ${data.deviceID}`);
-        } 
-        else {
-          // MANUAL UPLOAD
-          if (!files.cert || !files.key) throw new Error("Please upload both files");
-          if (!formData.device_id) throw new Error("Device ID is required for manual upload");
-
-          const certText = await files.cert.text();
-          const keyText = await files.key.text();
-
-          const { error } = await supabase.from('fiscal_devices').insert({
-            device_id: parseInt(formData.device_id),
-            organization_id: formData.organizationId,
-            serial_number: formData.serialNumber,
-            activation_key: formData.activationKey, // Save the key manually entered
-            device_model_name: formData.deviceModelName,
-            device_model_version: formData.deviceModelVersion,
-            certificate_pem: certText,
-            private_key_pem: keyText,
-            status: 'ACTIVE'
-          });
-          if (error) throw error;
-          alert('Device Manually Added!');
-        }
+          .select('*')
+          .eq('organization_id', member.organization_id)
+          .order('created_at', { ascending: false });
+        setDevices(data || []);
       }
-
-      setIsModalOpen(false);
-      fetchDevices();
-    } catch (err) {
-      alert('Error: ' + err.message);
+    } catch (error) {
+      console.error("Error fetching devices:", error);
     } finally {
       setLoading(false);
     }
   }
 
+  function addLog(msg) {
+    setLogs(prev => [...prev, msg]);
+  }
+
+  // --- NEW: CHECK STATUS FUNCTION ---
+  async function handleCheckStatus(device) {
+    setCheckingId(device.device_id);
+    try {
+        const { data, error } = await supabase.functions.invoke('check-device-status', {
+            body: { deviceId: device.device_id }
+        });
+
+        if (error) throw new Error(error.message);
+        if (data?.error) throw new Error(data.error);
+
+        // Success - refresh list to show new status
+        await fetchDevices();
+        alert(`Status Updated!\nMode: ${data.deviceOperatingMode || 'Unknown'}\nDay: ${data.fiscalDayStatus || 'Unknown'}`);
+
+    } catch (err) {
+        alert("Status Check Failed: " + err.message);
+    } finally {
+        setCheckingId(null);
+    }
+  }
+
+  // --- ADD DEVICE ---
+  async function handleAddDevice(e) {
+    e.preventDefault();
+    if(!newDevice.device_id || !newDevice.serial_number) return alert("Required fields missing");
+    const { data: member } = await supabase.from('organization_members').select('organization_id').eq('user_id', user.id).single();
+
+    const { error } = await supabase.from('fiscal_devices').insert({
+      organization_id: member.organization_id,
+      device_id: newDevice.device_id,
+      serial_number: newDevice.serial_number,
+      device_model_name: newDevice.device_model_name,
+      device_model_version: newDevice.device_model_version,
+      status: 'PENDING' 
+    });
+
+    if (error) alert("Error: " + error.message);
+    else {
+      setIsModalOpen(false);
+      fetchDevices();
+      setNewDevice({ device_id: '', serial_number: '', device_model_name: 'Server', device_model_version: 'v1' });
+    }
+  }
+
+  // --- REGISTER DEVICE ---
+  const openRegisterModal = (device) => {
+    setSelectedDevice(device);
+    setActivationKey('');
+    setLogs([]);
+    setIsRegisterModalOpen(true);
+  };
+
+  async function handleRegister(e) {
+    e.preventDefault();
+    setRegistering(true);
+    setLogs([]);
+
+    try {
+      if (activationKey.length < 8) throw new Error("Key too short");
+
+      const rawSerial = String(selectedDevice.serial_number).trim();
+      const rawId = String(selectedDevice.device_id).trim();
+      const zimraDeviceId = rawId.padStart(10, '0');
+      const version = selectedDevice.device_model_version || 'v1';
+      const commonName = `ZIMRA-${rawSerial}-${zimraDeviceId}`;
+
+      addLog(`Generating Keys for CN: ${commonName}...`);
+
+      const keys = await new Promise((resolve, reject) => {
+         forge.pki.rsa.generateKeyPair({ bits: 2048, workers: 2 }, (err, keypair) => {
+           if (err) reject(err); else resolve(keypair);
+         });
+      });
+
+      const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
+      const publicKey = keys.publicKey;
+      
+      addLog("Keys Generated. Creating CSR...");
+
+      const csr = forge.pki.createCertificationRequest();
+      csr.publicKey = publicKey;
+      csr.setSubject([{ name: 'commonName', value: commonName }]);
+      csr.sign(keys.privateKey, forge.md.sha256.create());
+      const csrPem = forge.pki.certificationRequestToPem(csr);
+
+      const proxyUrl = `/zimra-proxy/Public/${version}/${zimraDeviceId}/RegisterDevice`;
+      addLog(`Sending to ZIMRA via Proxy...`);
+      
+      const zimraRes = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'DeviceModelName': selectedDevice.device_model_name || 'Server',
+          'DeviceModelVersion': '1.0'
+        },
+        body: JSON.stringify({
+          activationKey: activationKey.trim(),
+          certificateRequest: csrPem
+        })
+      });
+
+      const responseText = await zimraRes.text();
+      if (!zimraRes.ok) throw new Error(`ZIMRA Error (${zimraRes.status}): ${responseText}`);
+
+      addLog("ZIMRA Accepted! Saving credentials...");
+      const zimraData = JSON.parse(responseText);
+
+      const { error: dbError } = await supabase.from('fiscal_devices').update({
+          status: 'ACTIVE',
+          private_key_pem: privateKeyPem,
+          certificate_pem: zimraData.certificate,
+          registered_at: new Date().toISOString(),
+          activation_key: activationKey 
+        }).eq('device_id', selectedDevice.device_id);
+
+      if (dbError) throw dbError;
+
+      addLog("SUCCESS! Device is Active.");
+      alert('Device Registered Successfully!');
+      setIsRegisterModalOpen(false);
+      fetchDevices();
+
+    } catch (err) {
+      console.error(err);
+      addLog(`FAILED: ${err.message}`);
+    } finally {
+      setRegistering(false);
+    }
+  }
+
   return (
-    <div className="p-6">
+    <div className="p-6 max-w-6xl mx-auto">
+      {/* Header */}
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Fiscal Devices</h1>
-        <button 
-          onClick={openCreateModal} 
-          className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm"
-        >
-          <Plus size={20} /> Add Device
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <Server className="text-indigo-600" /> Fiscal Devices
+          </h1>
+          <p className="text-sm text-gray-500">Manage your ZIMRA-connected hardware.</p>
+        </div>
+        <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center gap-2">
+          <Plus size={18} /> Add Device
         </button>
       </div>
 
+      {/* Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {loading && <p className="text-gray-400">Loading devices...</p>}
+        {!loading && devices.length === 0 && <div className="col-span-3 p-10 text-center bg-gray-50 rounded-xl border border-dashed border-gray-300">No devices found.</div>}
+
         {devices.map(device => (
-          <div key={device.device_id} className="group bg-white p-5 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition relative">
-            <button 
-              onClick={() => openEditModal(device)}
-              className="absolute top-4 right-4 p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition opacity-0 group-hover:opacity-100"
-              title="Edit Device"
-            >
-              <Edit2 size={18} />
-            </button>
+          <div key={device.device_id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 relative group">
+            
+            {/* Top Badge: Online/Offline Mode */}
+            <div className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${device.operating_mode === 'Online' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
+               <Activity size={12}/> {device.operating_mode || 'Unknown Mode'}
+            </div>
 
-            <div className="flex items-start gap-4 mb-4">
-              <div className={`p-3 rounded-lg ${device.status === 'ACTIVE' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
-                <Server size={24} />
-              </div>
-              <div>
-                <h3 className="font-bold text-lg text-gray-900">{device.serial_number}</h3>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`w-2 h-2 rounded-full ${device.status === 'ACTIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                  <span className="text-xs font-medium text-gray-600 uppercase">{device.status}</span>
-                </div>
+            <div className="flex items-center gap-4 mb-4">
+              <div className={`p-3 rounded-lg ${device.status === 'ACTIVE' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}><Server size={24} /></div>
+              <div><h3 className="font-bold text-gray-800">{device.device_model_name}</h3><p className="text-xs text-gray-500 font-mono">SN: {device.serial_number}</p></div>
+            </div>
+
+            {/* Device Stats Grid */}
+            <div className="space-y-2 text-sm text-gray-600 mb-6 bg-gray-50 p-3 rounded-lg">
+              <div className="flex justify-between pb-1"><span className="text-gray-400">ID</span><span className="font-mono">{device.device_id}</span></div>
+              <div className="flex justify-between pb-1"><span className="text-gray-400">Last Receipt</span><span className="font-bold">{device.last_receipt_global_no || 0}</span></div>
+              
+              {/* Fiscal Day Status Line */}
+              <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                 <span className="text-gray-400 flex items-center gap-1">Day Status</span>
+                 <span className={`font-bold text-xs px-2 py-0.5 rounded ${device.fiscal_day_status === 'FiscalDayOpened' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-200 text-gray-600'}`}>
+                    {device.fiscal_day_status === 'FiscalDayOpened' ? <span className="flex items-center gap-1"><Sun size={10}/> Open</span> : <span className="flex items-center gap-1"><Moon size={10}/> Closed</span>}
+                 </span>
               </div>
             </div>
 
-            <div className="space-y-2 text-sm text-gray-600 border-t pt-3">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Device ID</span>
-                <span className="font-mono bg-gray-50 px-2 py-0.5 rounded text-gray-700">{device.device_id}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Org</span>
-                <span className="font-medium text-right truncate w-32">{device.organizations?.name}</span>
-              </div>
+            {/* Actions */}
+            <div className="space-y-2">
+                {device.status !== 'ACTIVE' ? (
+                  <button onClick={() => openRegisterModal(device)} className="w-full py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 transition flex justify-center items-center gap-2"><Key size={16} /> Register with ZIMRA</button>
+                ) : (
+                  <div className="flex gap-2">
+                    {/* Check Status Button */}
+                    <button 
+                        onClick={() => handleCheckStatus(device)} 
+                        disabled={checkingId === device.device_id}
+                        className="flex-1 py-2 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-lg font-bold text-sm transition flex justify-center items-center gap-2"
+                    >
+                        {checkingId === device.device_id ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16} />} 
+                        Check Status
+                    </button>
+                    <button disabled className="px-3 py-2 bg-gray-100 text-gray-400 rounded-lg font-bold text-sm cursor-not-allowed"><Shield size={16} /></button>
+                  </div>
+                )}
             </div>
+
           </div>
         ))}
       </div>
 
-      {isModalOpen && (
+      {/* Modals for Register and Add Device remain the same... */}
+      {/* ... (Keep the modals code from previous step here) ... */}
+      {/* Register Modal */}
+      {isRegisterModalOpen && selectedDevice && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
-            
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h2 className="text-lg font-semibold text-gray-800">
-                {editingDevice ? 'Edit Device Details' : 'Register New Device'}
-              </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-1 transition">
-                <X size={20} />
-              </button>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200">
+            <h3 className="font-bold text-lg mb-4">ZIMRA Registration</h3>
+            <div className="bg-gray-900 text-green-400 font-mono text-xs p-3 rounded mb-4 h-32 overflow-y-auto">
+              {logs.length === 0 ? "Ready to start..." : logs.map((l, i) => <div key={i}>{l}</div>)}
+              {registering && <div className="animate-pulse">_</div>}
             </div>
-
-            {!editingDevice && (
-              <div className="flex border-b">
-                <button 
-                  onClick={() => setActiveTab('auto')}
-                  className={`flex-1 p-3 text-sm font-medium transition ${activeTab === 'auto' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  Auto Register
-                </button>
-                <button 
-                  onClick={() => setActiveTab('manual')}
-                  className={`flex-1 p-3 text-sm font-medium transition ${activeTab === 'manual' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  Manual Upload
+            <form onSubmit={handleRegister} className="space-y-4">
+              <input required className="input-field text-center text-2xl tracking-widest font-mono" placeholder="Activation Key" maxLength={10} value={activationKey} onChange={e => setActivationKey(e.target.value)} />
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" disabled={registering} onClick={() => setIsRegisterModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                <button type="submit" disabled={registering} className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2 disabled:opacity-50">
+                  {registering ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle size={18} />} {registering ? 'Working...' : 'Register Now'}
                 </button>
               </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Organization</label>
-                <select 
-                  className="input-field"
-                  value={formData.organizationId}
-                  onChange={e => setFormData({...formData, organizationId: e.target.value})}
-                  required
-                >
-                  <option value="">Select Organization...</option>
-                  {orgs.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number</label>
-                  <input 
-                    type="text" 
-                    className="input-field"
-                    value={formData.serialNumber}
-                    onChange={e => setFormData({...formData, serialNumber: e.target.value})}
-                    required
-                  />
-                </div>
-                
-                {/* Status - Edit Only */}
-                {editingDevice && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    <select 
-                      className="input-field"
-                      value={formData.status}
-                      onChange={e => setFormData({...formData, status: e.target.value})}
-                    >
-                      <option value="ACTIVE">Active</option>
-                      <option value="BLOCKED">Blocked</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              {/* AUTO REGISTER - Activation Key */}
-              {!editingDevice && activeTab === 'auto' && (
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-                  <label className="block text-sm font-medium text-blue-900 mb-1">ZIMRA Activation Key</label>
-                  <input 
-                    type="text" 
-                    className="block w-full rounded-md border-blue-200 p-2 text-sm focus:border-blue-500 focus:ring-blue-500"
-                    value={formData.activationKey}
-                    onChange={e => setFormData({...formData, activationKey: e.target.value})}
-                    required
-                  />
-                  <p className="text-xs text-blue-600 mt-2">
-                    We will generate keys and register automatically.
-                  </p>
-                </div>
-              )}
-
-              {/* MANUAL UPLOAD */}
-              {!editingDevice && activeTab === 'manual' && (
-                <div className="space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Device ID</label>
-                        <input 
-                        type="number" 
-                        className="input-field"
-                        placeholder="e.g. 15400"
-                        value={formData.device_id}
-                        onChange={e => setFormData({...formData, device_id: e.target.value})}
-                        required
-                        />
-                    </div>
-                    {/* ADDED: Activation Key for Manual Mode */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Activation Key</label>
-                        <input 
-                        type="text" 
-                        className="input-field"
-                        placeholder="Optional"
-                        value={formData.activationKey}
-                        onChange={e => setFormData({...formData, activationKey: e.target.value})}
-                        />
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Private Key (.pem)</label>
-                      <input 
-                        type="file" 
-                        accept=".pem,.key"
-                        className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-                        onChange={e => setFiles({...files, key: e.target.files[0]})}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Certificate (.crt)</label>
-                      <input 
-                        type="file" 
-                        accept=".crt,.pem,.cer"
-                        className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-                        onChange={e => setFiles({...files, cert: e.target.files[0]})}
-                        required
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* EDIT MODE - Show Activation Key */}
-              {editingDevice && (
-                <div>
-                   <label className="block text-sm font-medium text-gray-700 mb-1">Activation Key (Reference)</label>
-                   <input 
-                    type="text" 
-                    className="input-field"
-                    value={formData.activationKey}
-                    onChange={e => setFormData({...formData, activationKey: e.target.value})}
-                   />
-                </div>
-              )}
-
-              <div className="pt-4 flex justify-end gap-3 border-t mt-2">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition">Cancel</button>
-                <button type="submit" disabled={loading} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm font-medium">
-                  {loading ? 'Processing...' : (editingDevice ? 'Save Changes' : (activeTab === 'auto' ? 'Register Device' : 'Save Device'))}
-                </button>
-              </div>
-
             </form>
           </div>
         </div>
       )}
+
+      {/* Add Device Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold mb-4">Add New Fiscal Device</h2>
+            <form onSubmit={handleAddDevice} className="space-y-4">
+              <div><label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><Hash size={12}/> ZIMRA Device ID</label><input required className="input-field font-mono" placeholder="e.g. 29470" value={newDevice.device_id} onChange={e => setNewDevice({...newDevice, device_id: e.target.value})} /></div>
+              <div><label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><Tag size={12}/> Serial Number</label><input required className="input-field" placeholder="e.g. procomm-1" value={newDevice.serial_number} onChange={e => setNewDevice({...newDevice, serial_number: e.target.value})} /></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><Box size={12}/> Model</label><input required className="input-field" value={newDevice.device_model_name} onChange={e => setNewDevice({...newDevice, device_model_name: e.target.value})} /></div>
+                <div><label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><Activity size={12}/> Version</label><input required className="input-field" value={newDevice.device_model_version} onChange={e => setNewDevice({...newDevice, device_model_version: e.target.value})} /></div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6"><button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button><button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Save Device</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

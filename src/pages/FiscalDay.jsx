@@ -1,77 +1,105 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient'; // Adjusted path to match project structure
 import { useAuth } from '../contexts/Auth';
-import { Lock, Unlock, AlertTriangle, Printer } from 'lucide-react';
+import { Lock, Unlock, Printer } from 'lucide-react';
 
 export default function FiscalDay() {
   const { user } = useAuth();
   const [device, setDevice] = useState(null);
   const [currentDay, setCurrentDay] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      setError(null);
+      // 1. Get Org ID
+      const { data: member, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (memberError) {
+        throw new Error('Unable to find your organization membership. Please contact support.');
+      }
+
+      // 2. Get Device and its Current Day Status
+      const { data: dev, error: deviceError } = await supabase.from('fiscal_devices')
+        .select('*, fiscal_days(*)')
+        .eq('organization_id', member.organization_id)
+        .eq('status', 'ACTIVE')
+        .order('created_at', { foreignTable: 'fiscal_days', ascending: false })
+        .limit(1)
+        .single();
+
+      if (deviceError && deviceError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+        throw deviceError;
+      }
+
+      if (dev) {
+        setDevice(dev);
+        // Find the open day or the last closed day (first item due to desc sort)
+        const lastDay = dev.fiscal_days?.[0];
+        setCurrentDay(lastDay);
+      } else {
+        setError('No active fiscal device found for your organization. Please contact support to set up a device.');
+      }
+    } catch (err) {
+      console.error('Error fetching fiscal device status:', err);
+      setError(err.message || 'Failed to load device status. Please try again.');
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [user.id]);
 
   useEffect(() => {
     fetchStatus();
-  }, []);
-
-  async function fetchStatus() {
-    // 1. Get Org ID
-    const { data: member } = await supabase
-      .from('organization_members')
-      .select('organization_id')
-      .eq('user_id', user.id)
-      .single();
-    
-    if (!member) return;
-
-    // 2. Get Device and its Current Day Status
-    const { data: dev } = await supabase.from('fiscal_devices')
-      .select('*, fiscal_days(*)')
-      .eq('organization_id', member.organization_id)
-      .eq('status', 'ACTIVE')
-      .order('created_at', { foreignTable: 'fiscal_days', ascending: false })
-      .limit(1)
-      .single();
-
-    if (dev) {
-      setDevice(dev);
-      // Find the open day or the last closed day (first item due to desc sort)
-      const lastDay = dev.fiscal_days?.[0];
-      setCurrentDay(lastDay);
-    }
-  }
+  }, [fetchStatus]);
 
   async function handleCloseDay() {
     if (!confirm("Are you sure you want to close the Fiscal Day? This generates the Z-Report.")) return;
     setLoading(true);
+    try {
+      const { error } = await supabase.functions.invoke('close-fiscal-day', {
+        body: { deviceId: device.device_id }
+      });
 
-    // Call Edge Function to Calculate Totals, Sign, and Close
-    const { data, error } = await supabase.functions.invoke('close-fiscal-day', {
-      body: { deviceId: device.device_id }
-    });
+      if (error) throw error;
 
-    if (error) alert('Error: ' + error.message);
-    else {
       alert('Fiscal Day Closed Successfully! Z-Report Generated.');
-      fetchStatus();
+      await fetchStatus();
+    } catch (err) {
+      console.error('Error closing fiscal day:', err);
+      alert('Error: ' + (err.message || 'Failed to close fiscal day'));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function handleOpenDay() {
     setLoading(true);
-    const { data, error } = await supabase.functions.invoke('open-fiscal-day', {
-      body: { deviceId: device.device_id }
-    });
+    try {
+      const { error } = await supabase.functions.invoke('open-fiscal-day', {
+        body: { deviceId: device.device_id }
+      });
 
-    if (error) alert('Error: ' + error.message);
-    else {
+      if (error) throw error;
+
       alert('New Fiscal Day Opened!');
-      fetchStatus();
+      await fetchStatus();
+    } catch (err) {
+      console.error('Error opening fiscal day:', err);
+      alert('Error: ' + (err.message || 'Failed to open fiscal day'));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-  if (!device) return <div className="p-10 text-center text-gray-500">Loading Device Status... (Ensure you have an active device)</div>;
+  if (initialLoading) return <div className="p-10 text-center text-gray-500">Loading Device Status...</div>;
+  if (error) return <div className="p-10 text-center text-red-500">{error}</div>;
+  if (!device) return <div className="p-10 text-center text-gray-500">No active fiscal device found. Please contact support.</div>;
 
   const isDayOpen = currentDay?.status === 'FiscalDayOpened';
 
